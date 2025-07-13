@@ -1,0 +1,6 @@
+httpx
+langchain
+langgraph
+langchain-community
+langchain-openai
+tavily-python
