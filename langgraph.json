@@ -1,0 +1,11 @@
+{
+    "dockerfile_lines": [],
+    "graphs": {
+      "Financial Analyst": "./graph.py:make_graph"
+    },
+    "env": ".env",
+    "python_version": "3.12",
+    "dependencies": [
+      "."
+    ]
+  }
