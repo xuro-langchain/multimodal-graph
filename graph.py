@@ -3,18 +3,18 @@ import asyncio
 import httpx
 import dotenv
 import uuid
-from typing_extensions import TypedDict, Annotated
+from typing_extensions import Literal, TypedDict, Annotated
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import AnyMessage, add_messages
 from langgraph.types import Send
-from tavily import TavilyClient
+from tavily import AsyncTavilyClient
 
 dotenv.load_dotenv()
 
-tavily_client = TavilyClient()
+tavily_client = AsyncTavilyClient()
 
 # Initialize a multimodal chat model that supports PDFs
 llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0)
@@ -41,7 +41,6 @@ class Input(TypedDict):
 
 class Output(TypedDict):
     answer: str
-    citations: list[str]
 
 
 class Query(BaseModel):
@@ -59,14 +58,14 @@ async def research_terminology(state: State) -> State:
     """
     structured_llm = llm.with_structured_output(Query)
     response = await structured_llm.ainvoke([SystemMessage(content=prompt), HumanMessage(content=question)])
-    return {"queries": response.queries}
+    return {"queries": response.queries, "messages": [HumanMessage(content=question)]}
 
-def start_parallel_search(state: State):
+def start_parallel_search(state: State) -> Literal["search_web"]:
     return [Send("search_web", {"query": query}) for query in state["queries"]]
 
 async def search_web(state: State) -> State:
     query = state["query"]
-    search_results = tavily_client.search(query)
+    search_results = await tavily_client.search(query)
     context = "\n".join([result["content"] for result in search_results["results"]])
     return {"context": [context]}
 
@@ -92,27 +91,27 @@ async def process_pdf(state: State) -> State:
     </context>
     """
 
-    # Fetch PDF and encode as base64
-    pdf_bytes = httpx.get(pdf_url).content
-    pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-
+    async with httpx.AsyncClient() as client:
+        response = await client.get(pdf_url)
+        pdf_bytes = response.content
+        pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
     # Create multimodal message with PDF file content block
-    human_message = HumanMessage(
-        content=[
-            {"type": "text", "text": "Here's the 10-k filing you should analyze."},
-            {
-                "type": "file",
-                "source_type": "base64",
-                "data": pdf_b64,
-                "mime_type": "application/pdf",
-                "filename": "10k.pdf",
-            },
-        ]
-    )
+        human_message = HumanMessage(
+            content=[
+                {"type": "text", "text": "Here's the 10-k filing you should analyze."},
+                {
+                    "type": "file",
+                    "source_type": "base64",
+                    "data": pdf_b64,
+                    "mime_type": "application/pdf",
+                    "filename": "10k.pdf",
+                },
+            ]
+        )
 
-    # Invoke the model
-    response = await llm.ainvoke([SystemMessage(content=system_prompt), human_message])
+        # Invoke the model
+        response = await llm.ainvoke([SystemMessage(content=system_prompt), human_message])
     return {"answer": response.content, "messages": [response]}
 
 
